@@ -1,5 +1,6 @@
 # path to todo.txt
-$path = "$env:HOMESHARE\todo.txt"
+$pathTodo = "$env:USERPROFILE\todo.txt"
+$pathDone = "$env:USERPROFILE\done.txt"
 
 # internal
 function Get-Todo {
@@ -11,9 +12,12 @@ function Get-Todo {
 
     $todos = @()
 
-    if ((Test-Path -Path $path) -eq $false) { New-Item $path | Out-Null }
+    if ((Test-Path -Path $pathTodo) -eq $false) { New-Item $pathTodo | Out-Null }
 
-    $todos += Get-Content -Path $path -Encoding UTF8
+    $todos += Get-Content -Path $pathTodo -Encoding UTF8
+
+    if ($IncludeDone) { $todos += Get-Content -Path $pathDone -Encoding UTF8 }
+    
     $todoCount = $todos.Length
 
     $todoList = @()
@@ -21,36 +25,52 @@ function Get-Todo {
     if ($todoCount -eq 0) { return }
 
     for ($i = 0; $i -lt $todoCount; $i++) {
+        $index = $i
         $done = $null
         $priority = $null
         $project = $null
         $context = $null
         $color = "Gray"
+        $sortPriority = 10
 
         $todo = $todos[$i]
 
         if ($todo -eq "") { continue }
 
         if ($todo -match "^x") {
-            if (!$IncludeDone) { continue }
-
+            $index = 0
             $done = $true
-            $todo = ($todo -replace "^x", "").Trim()
-
+            $sortPriority = 99
             $color = "DarkGreen"
-        }
 
+            $todo = ($todo -replace "^x", "").Trim()
+        }
+      
         if ($todo -match "(\([A-Z]\))") {
             $priority = $Matches[0]
             $todo = ($todo -replace "(\([A-Z]\))", "").Trim()
 
             if (!$done) { 
                 switch ($priority) {
-                    "(A)" { $color = "Yellow" }
-                    "(B)" { $color = "Green" }
-                    "(C)" { $color = "Cyan" }
-                    "(D)" { $color = "White" }
-                    default { $color = "Gray" }
+                    "(A)" { 
+                        $color = "Yellow"
+                        $sortPriority = 1
+                    }   
+                    "(B)" { 
+                        $color = "Green" 
+                        $sortPriority = 2
+                    }
+                    "(C)" { $color = "Cyan"
+                            $sortPriority = 3
+                    }
+                    "(D)" { 
+                        $color = "White" 
+                        $sortPriority = 4
+                    }
+                    default { 
+                        $color = "Gray" 
+                        $sortPriority = 5
+                    }
                 }
             }
         }
@@ -66,20 +86,66 @@ function Get-Todo {
         }
 
         $todoList += [PSCustomObject]@{
-            Index       = $i
+            Index       = $index
             Done        = $done
             Priority    = $priority
             Description = $todo
             Project     = $project
             Context     = $context
             Color       = $color
+            SortPriority = $sortPriority
         }
     }
 
-    $todoList = $todoList | Sort-Object -Property Priority
+    $todoList = $todoList | Sort-Object -Property SortPriority
 
     return $todoList
 }
+
+#function Sort-Todo {
+    ## Totally unnecessary after I found a typo that hindered the already existing
+    ## Sort-Object from properly sorting the todo list.
+    ## Still keeping it as this is the first sorting algorithm I wrote
+    ## and I'm quite happy that it worked
+
+    #[CmdletBinding()]
+    #param (
+        #[Parameter(Mandatory, Position = 0)]
+        #[array] $todos
+    #)
+
+    #$sortedList = New-Object System.Collections.Generic.List[System.Object]
+
+    #$todoCount = $todos.Count
+
+    #foreach ($i in (0..($todoCount -1))) {
+        #$todo = $todos[$i]
+        #$sortedListCount = $sortedList.Count
+
+        #if ($sortedList.Count -eq 0) { 
+            #$sortedList.Add($todo); continue }
+        
+        #$sortPriority = $todo.SortPriority
+
+        #foreach ($c in (0..$sortedListCount)) {
+            #$lastIndex = $sortedListCount - 1
+            
+            #if ($c -gt $lastIndex) {
+                #$sortedList.Add($todo)
+                #break
+            #}
+
+            #$compareTodoSortPriority = $sortedList[$c].SortPriority
+
+            #if ( $sortPriority -le $compareTodoSortPriority) {
+                #$sortedList.Insert($c, $todo)
+                #break
+            #}
+        #}
+    #}
+
+    #return $sortedList
+#}
 
 function Format-Todo {
     [CmdletBinding()]
@@ -182,7 +248,7 @@ function Add-Todo {
         [String] $Context
     )
 
-    if ((Test-Path -Path $path) -eq $false) { New-Item -Path $path | Out-Null }
+    if ((Test-Path -Path $pathTodo) -eq $false) { New-Item -Path $pathTodo | Out-Null }
 
     $todo = $Description
 
@@ -203,7 +269,7 @@ function Add-Todo {
         $todo += " $Context"
     }
 
-    $todos = Get-Content -Path $path -Encoding UTF8
+    [array]$todos = Get-Content -Path $pathTodo -Encoding UTF8
 
     $index = $null
 
@@ -217,7 +283,7 @@ function Add-Todo {
         $todos += $todo
     }
 
-    Set-Content -Path $path -Value $todos -Encoding UTF8
+    Set-Content -Path $pathTodo -Value $todos -Encoding UTF8
 
     Write-Host "Added '$todo' at index '$index'"
 }
@@ -249,7 +315,7 @@ function Set-Todo {
     )
 
     $todos = @()
-    $todos += Get-Content -Path $path
+    $todos += Get-Content -Path $pathTodo
 
     if ($todos.Length -eq 0) { return }
 
@@ -259,9 +325,17 @@ function Set-Todo {
         $todo = $todos[$i]
 
         if ($Done) {
-            $currentDate = Get-Date -Format "dd-MM-yyyy"
+            $currentDate = Get-Date -Format "yyyy-MM-dd"
 
-            $todos[$i] = $todo.Insert(0, "x $currentDate ")
+            $todo = $todos[$i]
+            $todoDone = "x $currentDate $todo"
+
+            $todos[$i] = ""
+            #$todos[$i] = $todo.Insert(0, "x $currentDate ")
+
+            if (!(Test-Path $pathDone)) { New-Item -Path $pathDone | Out-Null }
+            
+            Add-Content -Path $pathDone -Value $todoDone
 
             Write-Host "Set '$todo' done"
         }
@@ -314,7 +388,7 @@ function Set-Todo {
     }
     
 
-    Set-Content -Path $path -Value $todos -Encoding UTF8
+    Set-Content -Path $pathTodo -Value $todos -Encoding UTF8
 }
 
 function Remove-Todo {
@@ -326,7 +400,7 @@ function Remove-Todo {
     )
 
     $todos = @()
-    $todos += Get-Content -Path $path -Encoding UTF8
+    $todos += Get-Content -Path $pathTodo -Encoding UTF8
 
     if ($todos.Length -eq 0) { return }
 
@@ -337,13 +411,7 @@ function Remove-Todo {
 
         $todos[$i] = ""
 
-        <# could be used for a clean up function
-        
-        $todoArrayList = [System.Collections.ArrayList]@(Get-Content -Path $path -Encoding UTF8)
-        $removedTodo = $todoArrayList[$i]
-        $todoArrayList.RemoveAt($i) #>
-
-        Set-Content -Path $path -Value $todos -Encoding UTF8
+        Set-Content -Path $pathTodo -Value $todos -Encoding UTF8
 
         Write-Host "Removed '$todoToRemove'"
     }   
